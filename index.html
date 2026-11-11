@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MiniPaaS - Deploy console</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#e9edf0;--card:#fff;--ink:#14213d;--mut:#5b6678;--line:#cfd6de;--teal:#0f766e;--amber:#f2b705;--red:#b42318;--log:#0e1726}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1726;--card:#16233a;--ink:#e8edf4;--mut:#9aa8bd;--line:#2a3a56;--log:#08101c}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 "IBM Plex Sans",system-ui,sans-serif}
+header{padding:28px 32px 8px}
+h1{font:700 28px "Space Grotesk",sans-serif;margin:0}
+header p{margin:4px 0 0;color:var(--mut)}
+main{display:grid;grid-template-columns:300px 1fr;gap:20px;padding:20px 32px 32px;max-width:1100px}
+@media(max-width:760px){main{grid-template-columns:1fr;padding:16px}header{padding:20px 16px 0}}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:18px}
+h2{font:700 17px "Space Grotesk",sans-serif;margin:0 0 12px}
+label{display:block;font-weight:500;margin:12px 0 4px}
+input,select{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:4px;background:transparent;color:inherit;font:inherit}
+:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+button{font:500 14px "IBM Plex Sans",sans-serif;padding:7px 12px;border:1px solid var(--line);border-radius:4px;background:transparent;color:inherit;cursor:pointer}
+button:hover{border-color:var(--teal)}
+.primary{background:var(--teal);color:#fff;border-color:var(--teal);width:100%;margin-top:16px;padding:10px}
+.danger:hover{border-color:var(--red);color:var(--red)}
+#msg{margin-top:10px;color:var(--red);min-height:20px}
+.app{display:grid;grid-template-columns:1fr auto;gap:8px 16px;padding:14px 0;border-top:1px solid var(--line)}
+.app:first-child{border-top:0;padding-top:0}
+.app.sel{box-shadow:-4px 0 0 var(--amber);padding-left:10px}
+.name{font:700 16px "Space Grotesk",sans-serif;cursor:pointer}
+.meta{color:var(--mut);font-size:13px}
+.pill{display:inline-block;padding:1px 9px;border-radius:99px;font-size:12px;font-weight:500;margin-left:8px;vertical-align:2px}
+.running{background:#d5f0ea;color:#0b5a53}.stopped{background:#e3e6ea;color:#475467}
+.building,.starting{background:#fdf0bf;color:#7a5b00}
+.acts{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.acts span{min-width:22px;text-align:center}
+#empty{color:var(--mut)}
+pre{background:var(--log);color:#b8f0d8;font:13px/1.6 "IBM Plex Mono",monospace;padding:14px;border-radius:4px;min-height:120px;max-height:240px;overflow:auto;margin:0;white-space:pre-wrap}
+.right{display:grid;gap:20px;align-content:start}
+</style>
+</head>
+<body>
+<header><h1>MiniPaaS</h1><p>Push an app, pick a runtime, and it goes live. No servers to manage.</p></header>
+<main>
+  <section class="panel">
+    <h2>Deploy an app</h2>
+    <label for="name">App name</label><input id="name" placeholder="my-blog" autocomplete="off">
+    <label for="rt">Runtime</label>
+    <select id="rt"><option>python</option><option>node</option><option>java</option><option>go</option></select>
+    <label for="inst">Instances</label><input id="inst" type="number" min="1" max="10" value="1">
+    <button class="primary" id="deploy">Deploy app</button>
+    <div id="msg" role="alert"></div>
+  </section>
+  <div class="right">
+    <section class="panel"><h2>Your apps</h2><div id="apps"></div></section>
+    <section class="panel"><h2 id="logt">Logs</h2><pre id="logs">Select an app to see its logs.</pre></section>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id); let sel = null;
+const api = async (path, method = "GET", body) => {
+  const r = await fetch("/api/apps" + path, {method, headers: {"Content-Type": "application/json"}, body: body && JSON.stringify(body)});
+  const d = r.status === 204 ? null : await r.json();
+  if (!r.ok) throw new Error(d.error); return d;
+};
+async function refresh() {
+  const apps = await api("");
+  $("apps").innerHTML = apps.length ? apps.map(a => `
+    <div class="app ${a.id === sel ? "sel" : ""}">
+      <div><span class="name" onclick="pick('${a.id}')">${a.name}</span><span class="pill ${a.status}">${a.status}</span>
+        <div class="meta">${a.runtime} · port ${a.port} · ${a.url}</div></div>
+      <div class="acts">
+        <button onclick="scale('${a.id}',${a.instances - 1})" aria-label="Fewer instances">-</button><span>${a.instances}</span>
+        <button onclick="scale('${a.id}',${a.instances + 1})" aria-label="More instances">+</button>
+        <button onclick="act('${a.id}','${a.status === "stopped" ? "start" : "stop"}')">${a.status === "stopped" ? "Start" : "Stop"}</button>
+        <button onclick="act('${a.id}','restart')">Restart</button>
+        <button class="danger" onclick="del('${a.id}')">Delete</button>
+      </div></div>`).join("") : `<div id="empty">No apps yet. Deploy your first one from the form.</div>`;
+  if (sel) showLogs();
+}
+async function showLogs() {
+  try { const l = await api(`/${sel}/logs`); $("logs").textContent = l.join("\n") || "No logs yet."; } catch { sel = null; }
+}
+const run = fn => async (...a) => { try { await fn(...a); $("msg").textContent = ""; } catch (e) { $("msg").textContent = e.message; } refresh(); };
+const pick = id => { sel = id; $("logt").textContent = "Logs"; refresh(); };
+const act = run((id, a) => api(`/${id}/${a}`, "POST"));
+const scale = run((id, n) => api(`/${id}/scale`, "POST", {instances: Math.max(1, n)}));
+const del = run(async id => { await api(`/${id}`, "DELETE"); if (sel === id) { sel = null; $("logs").textContent = "Select an app to see its logs."; } });
+$("deploy").onclick = run(async () => {
+  const a = await api("", "POST", {name: $("name").value, runtime: $("rt").value, instances: +$("inst").value});
+  $("name").value = ""; sel = a.id;
+});
+refresh(); setInterval(refresh, 1500);
+</script>
+</body>
+</html>
